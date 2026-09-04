@@ -1,0 +1,339 @@
+4.8 DATABASE DESIGN (REVIEWED & ACCURATE)
+The database design for the Smart Land & House Rental Management System was developed using an Entity Relationship Diagram (ERD). 
+The design contains interconnected entities that store and manage information related to users, landlords, tenants, properties, 
+house units, rental agreements, and payments.
+
+NOTE: This document reflects the ACTUAL IMPLEMENTED database structure with PRIMARY and FOREIGN KEYS preserved as reviewed.
+
+================================================================================
+4.8.1 USER ENTITY
+================================================================================
+The User entity is the central authentication and identity layer for the system (Django's AUTH_USER_MODEL).
+It handles login credentials and basic profile information.
+
+Table Name: users
+
+Attributes:
+•	id (Primary Key, BigAutoField) - Auto-generated unique identifier
+•	username (CharField, unique, max_length=150) - Login username
+•	email (EmailField, unique) - User email address for login
+•	password (CharField, max_length=128) - Hashed password
+•	first_name (CharField, max_length=150) - User's first name
+•	last_name (CharField, max_length=150) - User's last name
+•	role (CharField, max_length=10) - User role: LANDLORD, TENANT, or ADMIN
+•	phone (CharField, max_length=15) - Contact phone number
+•	gender (CharField, max_length=20) - User gender
+•	address (TextField) - Physical address
+•	is_active (BooleanField, default=True) - Account active status
+•	is_staff (BooleanField, default=False) - Staff access flag
+•	is_superuser (BooleanField, default=False) - Superuser access flag
+•	date_joined (DateTimeField) - Registration timestamp
+•	created_at (DateTimeField, auto_now_add=True) - Record creation timestamp
+•	updated_at (DateTimeField, auto_now=True) - Last update timestamp
+
+Relationships:
+•	One-to-One with Landlord entity (user.landlord)
+•	One-to-One with Tenant entity (user.tenant)
+
+Business Rules:
+•	Email is used as the primary login identifier (USERNAME_FIELD)
+•	Role determines whether a Landlord or Tenant record is created
+•	Each user can only have one role (either LANDLORD or TENANT, not both)
+
+================================================================================
+4.8.2 LANDLORD ENTITY
+================================================================================
+The Landlord entity stores information about property owners who register and manage properties in the system.
+
+Table Name: landlords
+
+Attributes:
+•	landlord_id (Primary Key, BigAutoField, db_column='landlord_id') - Unique landlord identifier
+•	user_id (Foreign Key → users.id, One-to-One, db_column='user_id') - Link to User authentication record
+•	business_name (CharField, max_length=200, blank=True) - Business or company name (optional)
+•	is_verified (BooleanField, default=False) - Landlord verification status
+
+Relationships:
+•	One-to-One with User (landlord.user) - Authentication credentials
+•	One-to-Many with Property (landlord.properties.all()) - A landlord can own many properties
+
+Access Patterns:
+•	From User: user.landlord (if user.role == 'LANDLORD')
+•	Get landlord's properties: landlord.properties.all()
+•	Get landlord's full name: landlord.user.get_full_name()
+•	Get landlord's contact: landlord.user.phone, landlord.user.email
+
+================================================================================
+4.8.3 TENANT ENTITY
+================================================================================
+The Tenant entity stores information about tenants who rent properties through the system.
+
+Table Name: tenants
+
+Attributes:
+•	tenant_id (Primary Key, BigAutoField, db_column='tenant_id') - Unique tenant identifier
+•	user_id (Foreign Key → users.id, One-to-One, db_column='user_id') - Link to User authentication record
+•	national_id (CharField, max_length=50, blank=True) - National identification number (optional)
+
+Relationships:
+•	One-to-One with User (tenant.user) - Authentication credentials
+•	One-to-Many with RentalAgreement (tenant.rental_agreements.all()) - A tenant can have multiple rental agreements over time
+
+Access Patterns:
+•	From User: user.tenant (if user.role == 'TENANT')
+•	Get tenant's agreements: tenant.rental_agreements.all()
+•	Get tenant's full name: tenant.user.get_full_name()
+•	Get tenant's contact: tenant.user.phone, tenant.user.email
+
+================================================================================
+4.8.4 PROPERTY ENTITY
+================================================================================
+The Property entity stores information about rental properties (buildings, complexes, land) managed by landlords.
+
+Table Name: properties
+
+Attributes:
+•	property_id (Primary Key, BigAutoField, db_column='property_id') - Unique property identifier
+•	landlord_id (Foreign Key → landlords.landlord_id, db_column='landlord_id') - Property owner
+•	property_name (CharField, max_length=200, db_column='property_name') - Property name/title
+•	property_type (CharField, max_length=20) - APARTMENT, HOUSE, COMMERCIAL, LAND
+•	location (CharField, max_length=200, blank=True, db_column='location') - General location description
+•	address (TextField) - Full physical address
+•	city (CharField, max_length=100, default='Dar es Salaam') - City name
+•	area (CharField, max_length=100, default='Magomeni') - Area/neighborhood
+•	price (DecimalField, max_digits=10, decimal_places=2, null=True, blank=True) - Base/reference price (optional)
+•	status (CharField, max_length=20, default='AVAILABLE') - AVAILABLE, OCCUPIED, INACTIVE
+•	description (TextField, blank=True) - Property description
+•	amenities (TextField, blank=True) - Comma-separated amenities (e.g., "parking, security, water")
+•	image (ImageField, upload_to='properties/', blank=True, null=True) - Property photo
+•	created_at (DateTimeField, auto_now_add=True) - Creation timestamp
+•	updated_at (DateTimeField, auto_now=True) - Last update timestamp
+
+Relationships:
+•	Many-to-One with Landlord (property.landlord) - One property belongs to one landlord
+•	One-to-Many with HouseUnit (property.units.all()) - One property can contain multiple house units
+
+Computed Properties:
+•	total_units - Returns count of all units in the property
+•	available_units - Returns count of units with status='AVAILABLE'
+
+Business Rules:
+•	Only the owning landlord can modify or delete the property
+•	Property status reflects overall availability, but individual units have their own status
+
+================================================================================
+4.8.5 HOUSE UNIT ENTITY
+================================================================================
+The House Unit entity stores information about individual rental units within a property (apartments, rooms, shops, etc.).
+
+Table Name: house_units
+
+Attributes:
+•	unit_id (Primary Key, BigAutoField, db_column='unit_id') - Unique unit identifier
+•	property_id (Foreign Key → properties.property_id, db_column='property_id') - Parent property
+•	unit_number (CharField, max_length=50) - Unit identifier (e.g., "A101", "B205", "Shop 3")
+•	unit_type (CharField, max_length=50, blank=True) - Unit type description (e.g., "2-bedroom apartment")
+•	bedrooms (IntegerField, default=1) - Number of bedrooms
+•	bathrooms (IntegerField, default=1) - Number of bathrooms
+•	square_feet (DecimalField, max_digits=10, decimal_places=2, null=True, blank=True) - Unit size in square feet
+•	rent_amount (DecimalField, max_digits=10, decimal_places=2) - Monthly rent amount
+•	currency (CharField, max_length=10, default='TZS') - Currency code (Tanzanian Shillings)
+•	status (CharField, max_length=20, default='AVAILABLE') - AVAILABLE, OCCUPIED, MAINTENANCE
+•	description (TextField, blank=True) - Unit description
+•	amenities (TextField, blank=True) - Comma-separated amenities (e.g., "balcony, parking, AC")
+•	floor_number (IntegerField, null=True, blank=True) - Floor level (e.g., 1, 2, 3)
+•	has_parking (BooleanField, default=False) - Parking space available
+•	has_balcony (BooleanField, default=False) - Balcony available
+•	image (ImageField, upload_to='units/', blank=True, null=True) - Unit photo
+•	created_at (DateTimeField, auto_now_add=True) - Creation timestamp
+•	updated_at (DateTimeField, auto_now=True) - Last update timestamp
+
+Relationships:
+•	Many-to-One with Property (unit.property) - One unit belongs to one property
+•	One-to-Many with RentalAgreement (unit.rental_agreements.all()) - One house unit can have multiple rental agreements over time
+
+Constraints:
+•	Unique together: (property_id, unit_number) - No duplicate unit numbers within the same property
+
+Business Rules:
+•	Unit must have status='AVAILABLE' for new rental applications
+•	When a rental agreement becomes ACTIVE, unit status automatically changes to OCCUPIED
+•	When agreement EXPIRES or is TERMINATED, unit status returns to AVAILABLE (if no other active agreements)
+•	Landlord can manually set status to MAINTENANCE when needed
+
+================================================================================
+4.8.6 RENTAL AGREEMENT ENTITY
+================================================================================
+The Rental Agreement entity records rental contracts and lease agreements between tenants and landlords.
+
+Table Name: rental_agreements
+
+Attributes:
+•	agreement_id (Primary Key, BigAutoField, db_column='agreement_id') - Unique agreement identifier
+•	tenant_id (Foreign Key → tenants.tenant_id, db_column='tenant_id') - Tenant in the agreement
+•	unit_id (Foreign Key → house_units.unit_id, db_column='unit_id') - Rented unit
+•	start_date (DateField) - Lease start date
+•	end_date (DateField) - Lease end date
+•	monthly_rent (DecimalField, max_digits=10, decimal_places=2) - Monthly rent amount (copied from unit at application time)
+•	deposit_amount (DecimalField, max_digits=10, decimal_places=2) - Security deposit amount
+•	status (CharField, max_length=20, default='APPLIED') - APPLIED, APPROVED, REJECTED, ACTIVE, EXPIRED, TERMINATED
+•	terms_conditions (TextField, blank=True) - Agreement terms and conditions
+•	signed_by_tenant (BooleanField, default=False) - Tenant signature flag
+•	signed_by_landlord (BooleanField, default=False) - Landlord signature flag
+•	signed_at (DateTimeField, null=True, blank=True) - Agreement signing timestamp
+•	rejection_reason (TextField, blank=True) - Reason for rejection (if status=REJECTED)
+•	created_at (DateTimeField, auto_now_add=True) - Application creation timestamp
+•	updated_at (DateTimeField, auto_now=True) - Last update timestamp
+
+Relationships:
+•	Many-to-One with Tenant (agreement.tenant) - One agreement belongs to one tenant
+•	Many-to-One with HouseUnit (agreement.house_unit) - One agreement is for one unit
+•	One-to-Many with Payment (agreement.payments.all()) - One agreement can have multiple payment records
+
+Computed Properties:
+•	landlord - Returns the landlord via agreement.house_unit.property.landlord
+
+Agreement Lifecycle:
+1.	APPLIED - Tenant submits application
+2.	APPROVED - Landlord approves (or REJECTED with reason)
+3.	ACTIVE - Tenant moves in and lease begins
+4.	EXPIRED - End date reached
+5.	TERMINATED - Early termination by either party
+
+Business Rules:
+•	Unit must be AVAILABLE for new applications
+•	No overlapping ACTIVE agreements allowed for the same unit
+•	When status changes to ACTIVE, unit.status becomes OCCUPIED
+•	When status changes to EXPIRED or TERMINATED, unit.status returns to AVAILABLE (if no other active agreements)
+•	Payment schedule is auto-generated when agreement becomes ACTIVE
+
+================================================================================
+4.8.7 PAYMENT ENTITY
+================================================================================
+The Payment entity stores rent payment records and tracks payment status for rental agreements.
+
+Table Name: payments
+
+Attributes:
+•	payment_id (Primary Key, BigAutoField, db_column='payment_id') - Unique payment identifier
+•	agreement_id (Foreign Key → rental_agreements.agreement_id, db_column='agreement_id') - Related rental agreement
+•	amount (DecimalField, max_digits=10, decimal_places=2) - Payment amount
+•	due_date (DateField) - Payment due date
+•	payment_date (DateTimeField, null=True, blank=True) - Actual payment timestamp (when completed)
+•	status (CharField, max_length=20, default='PENDING') - PENDING, COMPLETED, FAILED, OVERDUE
+•	payment_method (CharField, max_length=20, blank=True) - CASH, BANK_TRANSFER, MOBILE_MONEY, CLICKPESA
+•	transaction_reference (CharField, max_length=200, blank=True) - Transaction reference number
+•	gateway_transaction_id (CharField, max_length=200, blank=True) - Payment gateway transaction ID
+•	notes (TextField, blank=True) - Additional notes (e.g., "Late payment - waived penalty")
+•	receipt_url (URLField, blank=True) - Link to payment receipt or invoice
+•	created_at (DateTimeField, auto_now_add=True) - Record creation timestamp
+•	updated_at (DateTimeField, auto_now=True) - Last update timestamp
+
+Relationships:
+•	Many-to-One with RentalAgreement (payment.rental_agreement) - Each payment belongs to one rental agreement
+•	One-to-Many with PaymentGatewayLog (payment.gateway_logs.all()) - Payment can have multiple gateway interaction logs
+
+Payment Methods:
+•	CASH - Manual cash payment (recorded by landlord)
+•	BANK_TRANSFER - Direct bank transfer (recorded by landlord)
+•	MOBILE_MONEY - Generic mobile money payment
+•	CLICKPESA - ClickPesa mobile money gateway (USSD-PUSH)
+
+Business Rules:
+•	Payments are auto-generated monthly when agreement becomes ACTIVE
+•	Status automatically changes to OVERDUE when due_date < current_date and status=PENDING
+•	When payment is completed, payment_date is set to current timestamp
+•	Landlord can manually record CASH/BANK_TRANSFER payments
+•	Tenant can initiate CLICKPESA online payments via mobile money
+
+Access Patterns:
+•	Landlord views: payments for their properties
+•	Tenant views: their own payments
+•	Filter by status: PENDING, COMPLETED, OVERDUE
+•	Get overdue payments: status=OVERDUE or (status=PENDING and due_date < today)
+
+================================================================================
+4.8.8 PAYMENT GATEWAY LOG ENTITY
+================================================================================
+The PaymentGatewayLog entity provides an audit trail for payment gateway interactions (webhooks, callbacks, API calls).
+
+Table Name: payment_gateway_logs
+
+Attributes:
+•	id (Primary Key, BigAutoField) - Unique log identifier
+•	payment_id (Foreign Key → payments.payment_id, null=True, blank=True, db_column='payment_id') - Related payment (optional)
+•	gateway (CharField, max_length=50) - Gateway name (e.g., "clickpesa")
+•	transaction_id (CharField, max_length=200) - Gateway transaction ID
+•	request_data (JSONField) - Request payload sent to/from gateway
+•	response_data (JSONField, null=True, blank=True) - Response payload received
+•	status (CharField, max_length=50) - Transaction status from gateway
+•	created_at (DateTimeField, auto_now_add=True) - Log timestamp
+
+Relationships:
+•	Many-to-One with Payment (optional) - Log can be linked to a payment record
+
+Business Rules:
+•	Logs all webhook callbacks from ClickPesa
+•	Logs all API requests to payment gateways
+•	Used for debugging and audit purposes
+•	Helps track payment status changes and gateway communication
+
+================================================================================
+ENTITY RELATIONSHIP SUMMARY
+================================================================================
+
+User (id)
+  ↓ 1:1
+  ├── Landlord (landlord_id, FK: user_id → users.id)
+  │     ↓ 1:N
+  │   Property (property_id, FK: landlord_id → landlords.landlord_id)
+  │     ↓ 1:N
+  │   HouseUnit (unit_id, FK: property_id → properties.property_id)
+  │     ↓ 1:N
+  │   RentalAgreement (agreement_id, FK: unit_id → house_units.unit_id)
+  │     ↓ 1:N
+  │   Payment (payment_id, FK: agreement_id → rental_agreements.agreement_id)
+  │     ↓ 1:N
+  │   PaymentGatewayLog (FK: payment_id → payments.payment_id)
+  │
+  └── Tenant (tenant_id, FK: user_id → users.id)
+        ↓ 1:N
+      RentalAgreement (agreement_id, FK: tenant_id → tenants.tenant_id)
+        ↓ 1:N
+      Payment (inherits via agreement)
+
+================================================================================
+DATABASE INTEGRITY NOTES
+================================================================================
+
+PRIMARY KEYS (All Accurate):
+✓ User: id
+✓ Landlord: landlord_id
+✓ Tenant: tenant_id
+✓ Property: property_id
+✓ HouseUnit: unit_id
+✓ RentalAgreement: agreement_id
+✓ Payment: payment_id
+✓ PaymentGatewayLog: id
+
+FOREIGN KEYS (All Accurate):
+✓ Landlord.user_id → User.id
+✓ Tenant.user_id → User.id
+✓ Property.landlord_id → Landlord.landlord_id
+✓ HouseUnit.property_id → Property.property_id
+✓ RentalAgreement.tenant_id → Tenant.tenant_id
+✓ RentalAgreement.unit_id → HouseUnit.unit_id
+✓ Payment.agreement_id → RentalAgreement.agreement_id
+✓ PaymentGatewayLog.payment_id → Payment.payment_id
+
+CASCADE BEHAVIOR:
+- Deleting a User → deletes associated Landlord or Tenant
+- Deleting a Landlord → deletes all their Properties
+- Deleting a Property → deletes all its HouseUnits
+- Deleting a HouseUnit → deletes all its RentalAgreements
+- Deleting a RentalAgreement → deletes all its Payments
+- Deleting a Payment → deletes all its PaymentGatewayLogs
+
+================================================================================
+END OF DATABASE DESIGN DOCUMENTATION
+================================================================================

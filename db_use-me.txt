@@ -1,0 +1,393 @@
+================================================================================
+ SMRS — DB USE-ME.TXT  (for the SYSTEM ADMINISTRATOR / DBA)
+ Smart Rental Management System | PostgreSQL | DB: smrs_db
+ Prepared for: the person who administers the database directly via psql.
+================================================================================
+This guide covers EVERYTHING a system administrator needs to connect to, read,
+test, and maintain the database by hand — all in psql. It is written for the
+CURRENT (rewritten) schema where Landlord and Tenant are real entities with
+their own primary keys.
+
+End-users/developers who use the web UI should read use-me.txt instead.
+================================================================================
+CONTENTS
+  0. Connect & verify (psql)
+  1. Table inventory + row counts
+  2. Full columns per table (PK / FK / UNIQUE, exact psql names)
+  3. Everyday schema read / explore commands
+  4. The data model (relationships + ERD)
+  5. Insert data in the correct FK order
+  6. Update & delete (respecting foreign keys)
+  7. One end-to-end JOIN over the whole model
+  8. Analytical / reporting queries
+  9. Data-integrity rules (FKs, unique keys, choices) + backups/reset
+ 10. The non-touch Django framework tables
+
+IMPORTANT — ORM name vs physical psql column name. For a few fields Django
+renders a different physical column name:
+    Model/ORM field          psql column (what you type)
+    -------------            ---------------------------
+    Property.name            property_name
+    HouseUnit.property       property_id
+    RentalAgreement.house_unit -> unit_id
+    RentalAgreement.tenant   tenant_id
+    Payment.rental_agreement -> agreement_id
+Everything below uses the PHYSICAL psql column name.
+
+================================================================================
+0) HOW TO CONNECT (psql)
+================================================================================
+Read credentials from backend/.env. Connect:
+    $env:PGPASSWORD='<DB_PASSWORD>'        # PowerShell
+    psql -U smrs_user -h localhost -p 5432 -d smrs_db
+
+Or a one-liner with a connection URI (replace <DB_PASSWORD>):
+    psql "postgresql://smrs_user:<DB_PASSWORD>@localhost:5432/smrs_db"
+
+Never hard-code secrets into committed scripts; read them from .env or use a
+~/.pgpass file.
+
+Verify you are where you think you are:
+    \conninfo
+    SELECT current_database(), current_user, version();
+
+================================================================================
+1) TABLE INVENTORY
+================================================================================
+    \dt                                   -- list all tables
+    SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY 1;
+
+THE 8 CORE APP TABLES (your business data)
+    landlords                Landlord entity (owns properties)
+    tenants                  Tenant entity (rents units)
+    users                    Identity/login layer — every account (auth)
+    properties               A rental building / land owned by a landlord
+    house_units              One rentable unit inside a property
+    rental_agreements        Lease/application linking a tenant to a unit
+    payments                 Rent bills + payment status per agreement
+    payment_gateway_logs     Raw logs of click-payment webhook callbacks
+
+DJANGO-MANAGED FRAMEWORK TABLES  (see section 9 — DO NOT edit):
+    auth_group, auth_group_permissions, auth_permission, auth_user,
+    auth_user_groups, auth_user_user_permissions, contenttypes,
+    django_admin_log, django_content_type, django_migrations, django_session
+
+Row counts (one query):
+    SELECT 'landlords' t,count(*) FROM landlords
+    UNION ALL SELECT 'tenants',count(*) FROM tenants
+    UNION ALL SELECT 'users',count(*) FROM users
+    UNION ALL SELECT 'properties',count(*) FROM properties
+    UNION ALL SELECT 'house_units',count(*) FROM house_units
+    UNION ALL SELECT 'rental_agreements',count(*) FROM rental_agreements
+    UNION ALL SELECT 'payments',count(*) FROM payments
+    UNION ALL SELECT 'payment_gateway_logs',count(*) FROM payment_gateway_logs;
+
+--------------------------------------------------------------------------------
+2) COLUMNS PER TABLE  (exact, from the live schema)
+--------------------------------------------------------------------------------
+users (PK id) — identity + auth login layer
+  id bigint PK · password varchar(128) · last_login timestamptz NULL
+  is_superuser bool · username varchar(150) UNIQUE · first_name varchar(150)
+  last_name varchar(150) · is_staff bool · is_active bool · date_joined timestamptz
+  email varchar(254) UNIQUE · role varchar(10) [TENANT|LANDLORD|ADMIN]
+  phone varchar(15) · created_at timestamptz · updated_at timestamptz
+
+landlords (PK landlord_id)
+  landlord_id bigint PK · user_id bigint UNIQUE FK→users.id (1:1 to a user)
+  full_name varchar(200) · gender varchar(20) · phone varchar(15)
+  email varchar(254) · address text · business_name varchar(200)
+  business_registration_number varchar(100) · is_verified bool
+  verification_documents varchar(100) NULL · created_at timestamptz · updated_at timestamptz
+
+tenants (PK tenant_id)
+  tenant_id bigint PK · user_id bigint UNIQUE FK→users.id (1:1 to a user)
+  full_name varchar(200) · national_id varchar(50) · gender varchar(20)
+  phone varchar(15) · email varchar(254) · address text
+  date_of_birth date NULL · employment_status varchar(100) · employer_name varchar(200)
+  emergency_contact_name varchar(200) · emergency_contact_phone varchar(15)
+  created_at timestamptz · updated_at timestamptz
+
+properties (PK property_id)
+  property_id bigint PK · landlord_id bigint FK→landlords.landlord_id
+  property_name varchar(200) · property_type varchar(20) [APARTMENT|HOUSE|COMMERCIAL|LAND]
+  address text · city varchar(100) · area varchar(100) · description text · amenities text
+  image varchar(100) NULL · location varchar(200) · price numeric NULL
+  status varchar(20) [AVAILABLE|OCCUPIED|INACTIVE]
+  created_at timestamptz · updated_at timestamptz
+
+house_units (PK unit_id)
+  unit_id bigint PK · property_id bigint FK→properties.property_id
+  unit_number varchar(50) · unit_type varchar(50) blank OK · bedrooms int · bathrooms int
+  square_feet numeric NULL · rent_amount numeric · currency varchar(10)
+  status varchar(20) [AVAILABLE|OCCUPIED|MAINTENANCE] · description text · amenities text
+  floor_number int NULL · has_parking bool · has_balcony bool · image varchar(100) NULL
+  created_at timestamptz · updated_at timestamptz
+  UNIQUE(property_id, unit_number)   -- one unit number per property
+
+rental_agreements (PK agreement_id)
+  agreement_id bigint PK
+  unit_id bigint FK→house_units.unit_id        <-- the ORM 'house_unit' field
+  tenant_id bigint FK→tenants.tenant_id        <-- the ORM 'tenant' field
+  start_date date · end_date date · monthly_rent numeric · deposit_amount numeric
+  status varchar(20) [APPLIED|APPROVED|REJECTED|ACTIVE|EXPIRED|TERMINATED]
+  terms_conditions text · signed_by_tenant bool · signed_by_landlord bool
+  signed_at timestamptz NULL · rejection_reason text
+  created_at timestamptz · updated_at timestamptz
+
+payments (PK payment_id)
+  payment_id bigint PK
+  agreement_id bigint FK→rental_agreements.agreement_id  <-- ORM 'rental_agreement'
+  amount numeric · due_date date · payment_date timestamptz NULL
+  status varchar(20) [PENDING|COMPLETED|FAILED|OVERDUE]
+  payment_method varchar(20) [CASH|BANK_TRANSFER|MOBILE_MONEY|CLICKPESA]
+  transaction_reference varchar(200) · gateway_transaction_id varchar(200)
+  notes text · receipt_url varchar(200) · created_at timestamptz · updated_at timestamptz
+
+payment_gateway_logs (PK id) — support table
+  id bigint PK · payment_id bigint NULL FK→payments.payment_id · gateway varchar(50)
+  transaction_id varchar(200) · request_data JSONB · response_data JSONB NULL
+  status varchar(50) · created_at timestamptz
+
+--------------------------------------------------------------------------------
+3) EVERYDAY READ / EXPLORE
+--------------------------------------------------------------------------------
+    \d properties            # one table: columns + indexes
+    \d+ payments             # verbose incl. constraints
+    \d+ rental_agreements
+    SELECT column_name, data_type FROM information_schema.columns
+      WHERE table_name='payments' ORDER BY ordinal_position;
+
+List every foreign key in the schema:
+    SELECT con.conname,
+           a.attname          AS child_col,
+           f.relname          AS parent_tbl
+    FROM pg_constraint con
+    JOIN pg_class k ON con.conrelid    = k.oid
+    JOIN pg_class f ON con.confrelid   = f.oid
+    LEFT JOIN pg_attribute a ON a.attrelid = con.conrelid
+        AND a.attnum = ANY(con.conkey)
+    WHERE con.contype = 'f' AND k.relname NOT LIKE 'django%'
+    ORDER BY 1;
+
+--------------------------------------------------------------------------------
+4) THE DATA MODEL  (relationships + ERD)
+--------------------------------------------------------------------------------
+   users  (id)         landlords (landlord_id)      tenants (tenant_id)
+                 |                      |  (user_id 1:1)           | (user_id 1:1)
+                 |                      +--1:N-------------------> properties (property_id)
+                 |                                            property.landlord_id
+                 |                                                    |
+                 |                                             house_units (unit_id)
+                 |                                          house_unit.property_id FK
+                 |                                                    |
+                 |                                    rental_agreements (agreement_id)
+                 |                                  unit_id FK, tenant_id FK
+                 |                                                    |
+                 |                                             payments (payment_id)
+                 |                                                    |
+                 |                                          payment_gateway_logs (id)
+                 |                                              payment_id FK
+
+   Schematic lines:
+     users --1:1--> landlords   (landlords.user_id = users.id)
+     users --1:1--> tenants     (tenants.user_id   = users.id)
+     landlords --1:N--> properties
+     properties --1:N--> house_units
+     house_units --1:N--> rental_agreements
+     tenants --1:N--> rental_agreements
+     rental_agreements --1:N--> payments
+     payments --1:N--> payment_gateway_logs
+
+RELATIONSHIPS  (child FK lives on the "many" side):
+  landlord 1:N property          property.landlord_id -> landlords.landlord_id
+  property 1:N house_unit        house_unit.property_id -> properties.property_id
+  tenant   1:N rental_agreement  rental_agreement.tenant_id -> tenants.tenant_id
+  house_unit 1:N rental_agreement rental_agreement.unit_id -> house_units.unit_id
+  rental_agreement 1:N payment   payment.agreement_id -> rental_agreements.agreement_id
+  payment 1:N payment_gateway_log gateway_log.payment_id -> payments.payment_id
+  users 1:1 landlord             landlords.user_id -> users.id
+  users 1:1 tenant               tenants.user_id   -> users.id
+
+--------------------------------------------------------------------------------
+5) INSERTING DATA — the correct FK order
+--------------------------------------------------------------------------------
+Rule: satisfy every FK. Parents first (create users + landlord/tenant entities
+before the property/agreement/payment rows). Tip: let the Django app create
+users/landlords/tenants (register) — the matching landlord/tenant row is
+auto-created by a signal. These examples show the psql path.
+
+1) Create an identity (login) row:
+   INSERT INTO users (password, email, username, role, is_active)
+   VALUES ('pbkdf2_sha256$...', 'dar@x.com', 'dar', 'LANDLORD', true);
+   -- recommend doing this via Django (the password is hashed there).
+
+2) The landlord entity (link to a user id). Usually auto-created on register:
+   INSERT INTO landlords (user_id, full_name, phone, email)
+   SELECT id, 'Dada Estates', phone, email FROM users WHERE email='dar@x.com';
+
+3) A property under that landlord:
+   INSERT INTO properties (landlord_id, property_name, property_type,
+                           city, area, address, status)
+   VALUES (1, 'Magomeni Block A', 'APARTMENT', 'Dar es Salaam', 'Magomeni',
+           'Plot 2', 'AVAILABLE');
+
+4) A house unit inside the property:
+   INSERT INTO house_units (property_id, unit_number, unit_type, bedrooms,
+                            bathrooms, rent_amount, currency, status)
+   SELECT (SELECT property_id FROM properties WHERE property_name='Magomeni Block A'),
+          'A-01','1BR',1,1,350000,'TZS','AVAILABLE';
+
+5) A tenant entity (auto-created on register too):
+   SELECT id FROM users WHERE email='t@x.com';          -- find the id
+   INSERT INTO tenants (user_id, full_name, phone, email)
+   SELECT id, 'Tina Tenant', phone, email FROM users WHERE email='t@x.com';
+
+6) A rental agreement (needs a unit_id and a tenant_id):
+   INSERT INTO rental_agreements (unit_id, tenant_id, start_date, end_date,
+                                  monthly_rent, deposit_amount, status)
+   VALUES (1, 1, '2026-09-01','2027-08-31', 350000, 350000, 'APPLIED');
+
+7) Payment records under the agreement:
+   INSERT INTO payments (agreement_id, amount, due_date, status)
+   VALUES (1, 350000, '2026-09-01','PENDING');
+
+8) Gateway log (only after a gateway call / webhook):
+   INSERT INTO payment_gateway_logs (payment_id, gateway, transaction_id,
+                                     request_data, status)
+   VALUES (1,'CLICKPESA','tx_123','{"a":1}','RECEIVED');
+
+--------------------------------------------------------------------------------
+6) UPDATING & DELETING
+--------------------------------------------------------------------------------
+Update:
+   UPDATE house_units SET status='AVAILABLE' WHERE unit_number='A-01';
+   UPDATE payments SET status='COMPLETED', payment_date=NOW()
+     WHERE payment_method='CLICKPESA';
+
+Delete care: parent deletes cascade to children (see section 9). E.g. deleting
+a property removes its units, their agreements, and those payments. Review, then delete:
+   SELECT count(*) FROM house_units WHERE property_id=14;
+   SELECT count(*) FROM rental_agreements WHERE unit_id IN
+      (SELECT unit_id FROM house_units WHERE property_id=14);
+   SELECT count(*) FROM payments WHERE agreement_id IN
+      (SELECT agreement_id FROM rental_agreements WHERE unit_id IN
+        (SELECT unit_id FROM house_units WHERE property_id=14));
+   DELETE FROM properties WHERE property_id=14;   -- cascade clears the rest
+
+To remove a landlord cleanly, delete children first (or let CASCADE run):
+   DELETE FROM payment_gateway_logs;
+   DELETE FROM payments;
+   DELETE FROM rental_agreements;
+   DELETE FROM house_units;
+   DELETE FROM properties;
+   DELETE FROM landlords WHERE landlord_id=...;
+
+--------------------------------------------------------------------------------
+7) ONE QUERY, THE WHOLE DATA MODEL
+--------------------------------------------------------------------------------
+This JOIN crosses every business table so you can read a tenant's full
+contract: their landlord, the property, the unit, the agreement, and the bills:
+SELECT  l.full_name  AS landlord,
+        l.email      AS landlord_email,
+        p.property_name AS property,
+        u.unit_number   AS unit,
+        u.rent_amount,
+        t.full_name  AS tenant,
+        a.status     AS agreement_status,
+        a.start_date,a.end_date,
+        pay.amount, pay.due_date, pay.status AS payment_status,
+        pay.payment_method
+FROM landlords l
+JOIN   properties        p ON p.landlord_id  = l.landlord_id
+JOIN   house_units       u ON u.property_id  = p.property_id
+JOIN   rental_agreements a ON a.unit_id      = u.unit_id
+JOIN   tenants           t ON t.tenant_id    = a.tenant_id
+LEFT JOIN payments       pay ON pay.agreement_id = a.agreement_id
+ORDER BY p.property_name, u.unit_number, pay.due_date;
+
+--------------------------------------------------------------------------------
+8) ANALYTICAL / REPORTING QUERIES
+--------------------------------------------------------------------------------
+Properties per landlord:
+   SELECT l.full_name, count(p.property_id) AS properties
+   FROM landlords l LEFT JOIN properties p ON p.landlord_id=l.landlord_id
+   GROUP BY l.landlord_id ORDER BY properties DESC;
+
+Available vs total units per property:
+   SELECT p.property_name,
+          count(*) AS total,
+          count(*) FILTER (WHERE u.status='AVAILABLE') AS available
+   FROM properties p LEFT JOIN house_units u ON u.property_id=p.property_id
+   GROUP BY p.property_id ORDER BY total DESC;
+
+Occupancy rate (%) per property:
+   SELECT p.property_name,
+          round(100.0 * count(*) FILTER (WHERE u.status='OCCUPIED')
+                 / NULLIF(count(*),0), 1) AS occupied_pct
+   FROM properties p LEFT JOIN house_units u ON u.property_id=p.property_id
+   GROUP BY p.property_id ORDER BY occupied_pct DESC;
+
+Payment status totals:
+   SELECT status, count(*) AS n, sum(amount) AS total
+   FROM payments GROUP BY status ORDER BY status;
+
+Overdue rent (pending bills past due):
+   SELECT t.full_name, p.property_name, u.unit_number, pay.amount, pay.due_date
+   FROM payments pay
+   JOIN rental_agreements a ON a.agreement_id = pay.agreement_id
+   JOIN tenants t ON t.tenant_id = a.tenant_id
+   JOIN house_units u ON u.unit_id = a.unit_id
+   JOIN properties p ON p.property_id = u.property_id
+   WHERE pay.status='PENDING' AND pay.due_date < CURRENT_DATE;
+
+--------------------------------------------------------------------------------
+9) DATA-INTEGRITY RULES, BACKUP & RESET
+--------------------------------------------------------------------------------
+FOREIGN KEYS (all ON DELETE set via Django; most cascade)
+   landlords.user_id  -> users.id         (1:1)
+   tenants.user_id    -> users.id         (1:1)
+   properties.landlord_id -> landlords.landlord_id  (CASCADE)
+   house_unit.property_id -> properties.property_id (CASCADE)
+   rental_agreement.unit_id   -> house_units.unit_id   (CASCADE)
+   rental_agreement.tenant_id -> tenants.tenant_id     (CASCADE)
+   payment.agreement_id -> rental_agreements.agreement_id (CASCADE)
+   payment_gateway_log.payment_id -> payments.payment_id (CASCADE, nullable)
+
+UNIQUE / FULL
+   users.email UNIQUE · users.username UNIQUE
+   landlords.user_id UNIQUE (1:1)
+   tenants.user_id UNIQUE (1:1)
+   (house_units.property_id, unit_number) UNIQUE
+
+CHOICES (validated by Django app):
+   users.role  [TENANT|LANDLORD|ADMIN]
+   properties.property_type [APARTMENT|HOUSE|COMMERCIAL|LAND]
+   properties.status [AVAILABLE|OCCUPIED|INACTIVE]
+   house_units.status [AVAILABLE|OCCUPIED|MAINTENANCE]
+   rental_agreements.status [APPLIED|APPROVED|REJECTED|ACTIVE|EXPIRED|TERMINATED]
+   payments.status [PENDING|COMPLETED|FAILED|OVERDUE]
+   payments.payment_method [CASH|BANK_TRANSFER|MOBILE_MONEY|CLICKPESA]
+
+BACKUP (Postgres dump):
+   pg_dump -U smrs_user -h localhost -d smrs_db -f smrs_backup_$(date +%F).sql
+   pg_dump -U smrs_user --clean --if-exists --format=c -f smrs_backup.dump smrs_db
+
+RESET / re-apply migrations (development only, DESTROYS data):
+   cd backend
+   python manage.py migrate  -- brings schema in line with models
+   # To rebuild from scratch: drop schema, then 'manage.py migrate' re-creates it.
+   # (Django stores applied migrations in the django_migrations table.)
+
+--------------------------------------------------------------------------------
+10) THE FRAMEWORK TABLES — LEAVE THEM ALONE
+--------------------------------------------------------------------------------
+auth_group, auth_group_permissions, auth_permission, auth_user,
+auth_user_groups, auth_user_user_permissions, contenttypes,
+django_admin_log, django_content_type, django_migrations, django_session.
+Django relies on these for auth/admin/migrations. Don't write to them; they
+are governed automatically by the framework.
+
+================================================================================
+That's everything: connect, read, insert, join, audit, back-up. For normal
+usage (web UI + API testing) see use-me.txt instead.
+================================================================================

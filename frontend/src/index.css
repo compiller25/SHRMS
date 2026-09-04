@@ -1,0 +1,128 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Mobile-First Base Styles */
+@layer base {
+  * {
+    @apply box-border;
+  }
+  
+  html {
+    @apply scroll-smooth;
+  }
+  
+  body {
+    @apply bg-light-blue text-primary-blue text-sm md:text-base;
+    width: 100%;
+    overflow-x: hidden;
+  }
+  
+  /* Ensure responsive images */
+  img {
+    @apply max-w-full h-auto;
+  }
+  
+  /* Responsive typography */
+  h1 {
+    @apply text-2xl md:text-4xl font-bold;
+  }
+  
+  h2 {
+    @apply text-xl md:text-3xl font-bold;
+  }
+  
+  h3 {
+    @apply text-lg md:text-2xl font-bold;
+  }
+  
+  h4 {
+    @apply text-base md:text-xl font-bold;
+  }
+  
+  p {
+    @apply text-sm md:text-base leading-relaxed;
+  }
+}
+
+@layer components {
+  /* Responsive Button Styles */
+  .btn-primary {
+    @apply bg-lime-green text-white font-semibold py-2 px-4 md:px-6 rounded-lg hover:bg-opacity-90 transition duration-200 text-sm md:text-base w-full sm:w-auto;
+  }
+  
+  .btn-secondary {
+    @apply bg-primary-blue text-white font-semibold py-2 px-4 md:px-6 rounded-lg hover:bg-opacity-90 transition duration-200 text-sm md:text-base w-full sm:w-auto;
+  }
+  
+  /* Responsive Card */
+  .card {
+    @apply bg-white rounded-lg shadow-md overflow-hidden border border-gray-200 p-4 md:p-6;
+  }
+  
+  /* Responsive Input Field */
+  .input-field {
+    @apply w-full px-3 py-2 md:px-4 md:py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-lime-green focus:border-transparent bg-white text-primary-blue text-sm md:text-base;
+  }
+  
+  /* Responsive Label */
+  .label {
+    @apply block text-xs md:text-sm font-medium text-primary-blue mb-2;
+  }
+  
+  /* Responsive Container */
+  .container-responsive {
+    @apply w-full px-4 sm:px-6 md:px-8 lg:px-10 mx-auto max-w-7xl;
+  }
+  
+  /* Responsive Grid */
+  .grid-responsive {
+    @apply grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6;
+  }
+  
+  /* Responsive Flex */
+  .flex-responsive {
+    @apply flex flex-col sm:flex-row gap-4 md:gap-6;
+  }
+  
+  /* Responsive Navigation Item */
+  .nav-item {
+    @apply px-3 py-2 md:px-4 md:py-2 text-sm md:text-base hover:bg-gray-100 rounded transition;
+  }
+}
+
+/* Mobile-specific utilities */
+@media (max-width: 640px) {
+  body {
+    @apply text-sm;
+  }
+  
+  /* Stack elements vertically on mobile */
+  .mobile-stack {
+    @apply flex flex-col gap-3;
+  }
+  
+  /* Full width on mobile */
+  .mobile-full {
+    @apply w-full;
+  }
+  
+  /* Reduced padding on mobile */
+  .mobile-p-2 {
+    @apply p-2;
+  }
+}
+
+/* Tablet and up */
+@media (min-width: 768px) {
+  .tablet-hidden {
+    @apply hidden;
+  }
+}
+
+/* Desktop and up */
+@media (min-width: 1024px) {
+  .desktop-flex {
+    @apply flex;
+  }
+}

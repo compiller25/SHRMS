@@ -1,0 +1,254 @@
+=============================================================================
+ SMRS — USE-ME.TXT  (for USERS / TESTERS of the Web App)
+ Smart Rental Management System | React SPA + Django REST API
+=============================================================================
+This guide is for anyone who uses the application through the browser or the
+REST API: Tenants and Landlords. It tells you how to start the system, log in,
+and test every feature end-to-end.
+
+System administrator? If you need to poke the DATABASE directly with psql,
+use the companion file:  db_use_use-me.txt  (or the DBA guide).
+
+------------------------------------------------------------------------------
+1) WHAT THE SYSTEM DOES  (feature checklist — covered in detail below)
+------------------------------------------------------------------------------
+  * Register / Login / Logout (JWT auth)
+  * TENANT:      browse the marketplace, view property detail, apply to rent,
+                 see application status, see my rentals, pay rent (incl.
+                 ClickPesa mobile-money USSD push), view payment history.
+  * LANDLORD:    dashboard, manage properties + units, review/approve/reject
+                 rental applications, see rental agreements, record payments,
+                 view payment statistics.
+  * ADMIN:       dashboard overview.
+  * Payments:    manual record (offline Cash/Bank) and online (ClickPesa
+                 Mobile Money USSD push) + webhook / status polling.
+
+------------------------------------------------------------------------------
+2) HOW TO START THE SYSTEM
+------------------------------------------------------------------------------
+Start the BACKEND (Django API on port 8000):
+    cd backend
+    python manage.py runserver
+    # or double-click: start-backend.bat
+
+Start the FRONTEND (React app on port 3000):
+    cd frontend
+    npm install          # first time only
+    npm run dev
+    # or double-click: start-frontend.bat
+
+Then open in your browser:
+    http://localhost:3000
+
+The API root (for manual / curl / Postman testing):
+    http://localhost:8000/api/
+Admin site (system admin):   http://localhost:8000/admin/
+
+To confirm the backend is healthy, curl the API:
+    curl http://localhost:8000/api/marketplace/
+
+------------------------------------------------------------------------------
+3) SAMPLE LOGIN ACCOUNTS  (already in the live database)
+------------------------------------------------------------------------------
+These exist in smrs_db and will get you straight in:
+
+  ROLE      EMAIL                      PASSWORD        USERNAME
+  --------  -------------------------  --------------  ---------
+  Landlord  landlord@smrs.com          (set in deploy) landlord_dar
+  Landlord  nyumbayangu@admin.com    (set in deploy) nyumba001
+  Tenant    tunuluoga@admin.com        (set in deploy) Trl
+  Superuser syst@admin.com             (set in deploy) system
+
+NOTE: For security the passwords are not printed here. If you do not know one,
+ask the DBA to reset it via psql / Django admin. Or register a fresh account
+(section 3) — that is the easiest way to test.
+
+--------------------------------------------------------------------------------
+4) REGISTER A NEW USER (your own test accounts)
+--------------------------------------------------------------------------------
+In the browser go to http://localhost:3000/register
+
+Pick a role with the TENANT / LANDLORD toggle, then fill in:
+  Username, Email, First name, Last name, Phone, Password, Repeat password.
+
+Submit. On success you are logged in and redirected to your role dashboard:
+  - chose TENANT   -> /tenant/dashboard
+  - chose LANDLORD -> /landlord/dashboard
+
+Each new user is stored in the users table AND automates a matching row in
+landlords (if LANDLORD) or tenants (if TENANT). Verify it later via the
+database if you like (see the DBA guide).
+
+Login (http://localhost:3000/login): enter email + password.
+Logout via the menu (top-right).
+
+API equivalent:
+  # register
+  POST /api/auth/register/
+  { "username": "new_landlord", "email": "a@b.com", "password": "P@ss1234",
+    "password2": "P@ss1234", "first_name": "Ann", "last_name": "Adam",
+    "phone": "+255700000000", "role": "LANDLORD" }
+
+  # login
+  POST /api/auth/login/       { "email": "a@b.com", "password": "P@ss1234" }
+  -> returns access + refresh tokens. Use the access token:
+
+      GET /api/auth/profile/          with  Authorization: Bearer <access>
+
+--------------------------------------------------------------------------------
+5) TEST AS A TENANT  (http://localhost:3000/tenant/...)
+--------------------------------------------------------------------------------
+a) MARKETPLACE (browse available properties)
+   Home/menu:  Marketplace  or  /tenant/marketplace
+   You see property cards (name, type, area, image, min rent).
+   Click a property -> detail page shows its units + amenities.
+
+b) APPLY TO RENT A UNIT
+   On the property detail page, pick a unit and submit an application
+   (choose move-in/move-out dates, accept terms).
+   API:  POST /api/rentals/agreements/apply/
+         { "house_unit": "<unit_id>", "start_date": "2026-09-01",
+           "end_date": "2027-08-31", "terms_conditions": "."always" }
+   This creates a RentalAgreement with status = APPLIED, monthly_rent and
+   deposit (1 month) taken from the unit's rent_amount.
+
+c) MY APPLICATIONS  (/tenant/applications)
+   Shows status: APPLIED (waiting) / APPROVED / REJECTED (with reason).
+   API:  GET /api/rentals/agreements/my_applications/
+
+d) MY RENTALS    (/tenant/rentals)
+   Once a landlord approves, your ACTIVE agreements appear here.
+   API:  GET /api/rentals/agreements/
+
+e) PAYMENTS   (/tenant/payments)
+   - See every bill your agreements generate (a monthly schedule is created
+     when the agreement becomes ACTIVE).
+   - "Pay now" -> ClickPesa USSD push to the phone on your account. Follow
+     the prompt on your phone, enter PIN, the bill becomes COMPLETED.
+       API:  POST /api/payments/{id}/initiate_payment/
+             { "payment_gateway": "ClickPesa" }
+   - Status check (polling fallback):
+             GET  /api/payments/{id}/check_status/
+   Your payment history:   GET /api/payments/my_payments/
+   Overdue bills:           GET /api/payments/overdue/
+
+--------------------------------------------------------------------------------
+6) TEST AS A  LANDLORD  (/landlord/...)
+--------------------------------------------------------------------------------
+a) DASHBOARD   (/landlord/dashboard)
+   Summary cards: your properties, available units, revenue, pending apps.
+
+b) PROPERTIES    (/landlord/properties)
+   - Add a property: name, type, area, address, city, description, amenities.
+       POST /api/properties/
+   - Open a property: see its units; ADD house-units inside it with
+     unit number, type, bedrooms, bathrooms, rent_amount (TZS), status.
+       POST /api/units/        { "property": <id>, "unit_number": "5A",
+                                 "rent_amount": "350000", "bedrooms": 2, ... }
+   - Change a unit's availability (AVAILABLE/OCCUPIED/MAINTENANCE):
+       POST /api/units/{unit_id}/update_status/   { "status": "AVAILABLE" }
+
+   Only the owner sees their own properties/units. Others (tenants/admin) can
+   browse but cannot add/edit.
+
+c) APPLICATIONS / AGREEMENTS  (/landlord/agreements)
+   - Pending applications (tests to APPROVE or REJECT):
+       GET  /api/rentals/agreements/pending_applications/
+   - Approve -> agreement ACTIVE, unit auto-marked OCCUPIED, a monthly rent
+       payment schedule is created.
+         POST /api/rentals/agreements/{id}/process_application/
+         { "action": "approve" }          or   { "action": "reject",
+                "rejection_reason": "..." }
+   - Terminate a contract:
+         POST /api/rentals/agreements/{id}/terminate/
+
+d) PAYMENTS over-overview   (/landlord/dashboard or payments statistics)
+   - Revenue / pending / overdue totals:
+       GET  /api/payments/statistics/
+   - Record an offline payment against a bill (Cash / Bank / Mobile Money):
+         POST /api/payments/{id}/record_payment/
+         { "payment_method": "CASH", "transaction_reference": "RCPT99" }
+
+--------------------------------------------------------------------------------
+7) TEST AS  ADMIN  (/admin/dashboard)
+--------------------------------------------------------------------------------
+The admin dashboard gives an overview of the platform.
+
+Also, Django's own admin:  http://localhost:8000/admin/  (log in as a
+superuser). There you can view/edit users, landlords, tenants, properties,
+house units, rental agreements, payments, gateway logs.
+
+--------------------------------------------------------------------------------
+8) ONLINE PAYMENT END-TO-END (ClickPesa Mobile Money)
+--------------------------------------------------------------------------------
+ClickPesa is the ONLY online gateway wired in (Mobile Money USSD push).
+Full flow:
+
+  1. A tenant has a bill (PENDING) with their phone number mined in.
+  2. Tenant clicks Pay ->  POST /api/payments/{id}/initiate_payment/
+     Backend previews the order, then issues a USSD push to the tenant phone.
+  3. Tenant gets the USSD on the phone, enters Petro-sim PIN, sends.
+  4. Status becomes PROCESSING -> then COMPLETED by either:
+       - ClickPesa webhook to  /api/webhook/clickpesa/  (instant, requires the
+         webhook be configured in the ClickPesa dashboard), or
+       - the tenant/other polling the     check_status   endpoint.
+  5. A PaymentGatewayLog row records each callback; the payment is marked
+     paid with method = ClickPesa and the gateway transaction id stored.
+
+  Webhook endpoint (called by ClickPesa, no auth):
+       POST /api/webhook/clickpesa/
+  To test the webhook locally you need a public URL (e.g. ngrok) pointing at
+  http://localhost:8000/api/webhook/clickpesa/ and the event registered in
+  the ClickPesa dashboard.
+
+--------------------------------------------------------------------------------
+9) COMMON API CHEAT-SHEET  (for curl / Postman)
+--------------------------------------------------------------------------------
+# Auth
+POST /api/auth/register/          POST /api/auth/login/
+POST /api/auth/logout/            GET/PATCH /api/auth/profile/
+
+# Marketplace (public)
+GET  /api/marketplace/            GET  /api/marketplace/{id}/
+
+# Properties / Units (auth)
+GET  /api/properties/             POST /api/properties/
+GET  /api/units/                  POST /api/units/
+POST /api/units/{id}/update_status/
+
+# Rentals
+GET  /api/rentals/agreements/
+POST /api/rentals/agreements/apply/
+POST /api/rentals/agreements/{id}/process_application/
+POST /api/rentals/agreements/{id}/terminate/
+GET  /api/rentals/agreements/my_applications/
+GET  /api/rentals/agreements/pending_applications/
+
+# Payments
+GET  /api/payments/               GET /api/payments/{id}/
+POST /api/payments/{id}/record_payment/
+POST /api/payments/{id}/initiate_payment/
+GET  /api/payments/{id}/check_status/
+GET  /api/payments/my_payments/   GET /api/payments/overdue/
+GET  /api/payments/statistics/
+
+# Webhook (no auth)
+POST /api/webhook/clickpesa/
+
+Every "create" / "update" endpoint returns the full JSON of the created or
+updated object, so you can inspect it immediately.
+
+--------------------------------------------------------------------------------
+10) WHAT SHOULD "COVER EVERYTHING" MEAN  (first ride the UI, then the API)
+--------------------------------------------------------------------------------
+A good smoke test that touches every table:
+  Tenant registers -> view marketplace -> open a property -> apply to rent
+  Landlord registers -> add a property -> add a unit -> open "pending apps"
+  -> APPROVE the tenant -> agreement becomes ACTIVE + unit OCCUPIED + monthly
+  payments spawned -> tenant "my rentals" shows it -> tenant clicks pay ->
+  (either offline record by the landlord, or ClickPesa USSD push) -> payment
+  COMPLETED -> landlord statistics numbers move.
+
+If any step above fails, cross-check the live API field names and schema in
+the companion system-administrator guide (db_use-me.txt) — it lists the exact
+columns and relationships.
