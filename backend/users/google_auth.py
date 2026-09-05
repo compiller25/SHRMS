@@ -20,10 +20,14 @@ def verify_google_token(token):
     """
     try:
         # Get the Google Client ID from environment
-        google_client_id = config('GOOGLE_CLIENT_ID', default='')
+        google_client_id = config('GOOGLE_CLIENT_ID', default=None)
         
         if not google_client_id:
-            raise ValueError("GOOGLE_CLIENT_ID not configured in environment")
+            # Return a helpful error message if not configured
+            raise ValueError(
+                "GOOGLE_CLIENT_ID is not configured. "
+                "Set it in environment variables or .env file to enable Google OAuth."
+            )
         
         # Verify the token
         idinfo = id_token.verify_oauth2_token(token, requests.Request(), google_client_id)
