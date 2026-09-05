@@ -2,6 +2,7 @@ services:
   - type: web
     name: smrs-backend
     env: python
+    pythonVersion: 3.10
     plan: free
     region: oregon
     
@@ -16,8 +17,6 @@ services:
       gunicorn core.wsgi:application --bind 0.0.0.0:$PORT
     
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.10
       - key: DEBUG
         value: false
       - key: ALLOWED_HOSTS
