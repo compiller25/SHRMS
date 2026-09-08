@@ -39,12 +39,12 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    
+
     # Third-party apps
     'rest_framework',
     'rest_framework_simplejwt',
     'corsheaders',
-    
+
     # Local apps
     'users',
     'properties',
@@ -180,11 +180,23 @@ SIMPLE_JWT = {
 }
 
 # CORS Settings
-CORS_ALLOWED_ORIGINS = [
-    'http://localhost:3000',  # Updated frontend port
-    'http://127.0.0.1:3000',
-    'http://localhost:5173',  # Keep old port for compatibility
-    'http://127.0.0.1:5173',
+# Explicit, stable origins — can still be overridden via CORS_ALLOWED_ORIGINS env var on Render
+CORS_ALLOWED_ORIGINS = config(
+    'CORS_ALLOWED_ORIGINS',
+    default=(
+        'http://localhost:3000,http://127.0.0.1:3000,'
+        'http://localhost:5173,http://127.0.0.1:5173,'
+        'https://house-rental-system-kappa.vercel.app,'
+        'https://house-rental-system-sable.vercel.app'
+    ),
+    cast=Csv()
+)
+
+# Vercel preview deployments get a new random URL per push
+# (e.g. house-rental-system-<hash>-seantechsolution.vercel.app) — this regex
+# covers those automatically so you don't have to update env vars every deploy.
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^https://house-rental-system.*\.vercel\.app$",
 ]
 
 CORS_ALLOW_CREDENTIALS = True
