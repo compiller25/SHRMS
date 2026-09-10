@@ -61,3 +61,6 @@ build/
 *.bak
 *.tmp
 __pycache__/
+.vercel
+.env.local
+.env.*.local
