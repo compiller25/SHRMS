@@ -27,7 +27,15 @@ SECRET_KEY = config('SECRET_KEY', default='django-insecure-zrz7tv5&ecvt&-i@_fh#u
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config('DEBUG', default=True, cast=bool)
 
-ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=Csv())
+ALLOWED_HOSTS = [h.strip() for h in config('ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=Csv()) if h and h.strip()]
+
+# Render injects RENDER_EXTERNAL_HOSTNAME automatically — allow it
+RENDER_EXTERNAL_HOSTNAME = config('RENDER_EXTERNAL_HOSTNAME', default=None)
+if RENDER_EXTERNAL_HOSTNAME and RENDER_EXTERNAL_HOSTNAME not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
+
+# Behind Render's proxy, respect X-Forwarded-Proto for HTTPS detection
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 
 # Application definition
@@ -89,27 +97,51 @@ WSGI_APPLICATION = 'core.wsgi.application'
 # https://docs.djangoproject.com/en/5.0/ref/settings/#databases
 
 import sys as _sys
+from urllib.parse import urlparse
 
 TESTING = 'test' in _sys.argv
 
-DB_ENGINE = config('DB_ENGINE', default='django.db.backends.sqlite3')
+DATABASE_URL = config('DATABASE_URL', default=None)
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3' if TESTING else DB_ENGINE,
-        'NAME': ':memory:' if TESTING else config('DB_NAME', default=str(BASE_DIR / 'db.sqlite3')),
+if TESTING:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': ':memory:',
+        }
     }
-}
+elif DATABASE_URL:
+    # Parse Render Postgres connection string (no extra dependency needed).
+    # e.g. postgres://user:password@host:5432/dbname
+    _u = urlparse(DATABASE_URL)
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': _u.path.lstrip('/'),
+            'USER': _u.username or '',
+            'PASSWORD': _u.password or '',
+            'HOST': _u.hostname or 'localhost',
+            'PORT': str(_u.port) if _u.port else '5432',
+        }
+    }
+else:
+    DB_ENGINE = config('DB_ENGINE', default='django.db.backends.sqlite3')
 
-# Add PostgreSQL-specific settings only if using PostgreSQL
-if not TESTING and DB_ENGINE == 'django.db.backends.postgresql':
-    DATABASES['default'].update({
-        'USER': config('DB_USER', default=''),
-        'PASSWORD': config('DB_PASSWORD', default=''),
-        'HOST': config('DB_HOST', default='localhost'),
-        'PORT': config('DB_PORT', default='5432'),
-        'OPTIONS': {'options': '-csearch_path=public,django'},
-    })
+    DATABASES = {
+        'default': {
+            'ENGINE': DB_ENGINE,
+            'NAME': config('DB_NAME', default=str(BASE_DIR / 'db.sqlite3')),
+        }
+    }
+
+    # Add PostgreSQL-specific settings only if using PostgreSQL via split vars
+    if DB_ENGINE == 'django.db.backends.postgresql':
+        DATABASES['default'].update({
+            'USER': config('DB_USER', default=''),
+            'PASSWORD': config('DB_PASSWORD', default=''),
+            'HOST': config('DB_HOST', default='localhost'),
+            'PORT': config('DB_PORT', default='5432'),
+        })
 
 
 # Password validation
@@ -181,23 +213,28 @@ SIMPLE_JWT = {
 
 # CORS Settings
 # Explicit, stable origins — can still be overridden via CORS_ALLOWED_ORIGINS env var on Render
-CORS_ALLOWED_ORIGINS = config(
+_cors_raw = config(
     'CORS_ALLOWED_ORIGINS',
     default=(
         'http://localhost:3000,http://127.0.0.1:3000,'
         'http://localhost:5173,http://127.0.0.1:5173,'
+        'https://smrs-rental-system.vercel.app,'
         'https://house-rental-system-kappa.vercel.app,'
         'https://house-rental-system-sable.vercel.app'
     ),
     cast=Csv()
 )
+CORS_ALLOWED_ORIGINS = [o.strip() for o in _cors_raw if o and o.strip()]
 
-# Vercel preview deployments get a new random URL per push
-# (e.g. house-rental-system-<hash>-seantechsolution.vercel.app) — this regex
-# covers those automatically so you don't have to update env vars every deploy.
+# Vercel preview deployments get a new random URL per push — cover them
+# automatically so you don't have to update env vars every deploy.
 CORS_ALLOWED_ORIGIN_REGEXES = [
     r"^https://house-rental-system.*\.vercel\.app$",
+    r"^https://smrs-rental-system.*\.vercel\.app$",
 ]
+
+_csrf_raw = config('CSRF_TRUSTED_ORIGINS', default='', cast=Csv())
+CSRF_TRUSTED_ORIGINS = [o.strip() for o in _csrf_raw if o and o.strip()]
 
 CORS_ALLOW_CREDENTIALS = True
 

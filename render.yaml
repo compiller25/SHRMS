@@ -1,3 +1,9 @@
+databases:
+  - name: smrs-db
+    plan: free
+    databaseName: smrs_db
+    user: smrs_user
+
 services:
   - type: web
     name: smrs-backend
@@ -5,22 +11,41 @@ services:
     pythonVersion: 3.10
     plan: free
     region: oregon
-    
+
     buildCommand: |
       cd backend
       pip install -r requirements.txt
-      rm -f db.sqlite3
       python manage.py migrate --noinput
       python manage.py collectstatic --noinput --clear
-    
+
     startCommand: |
       cd backend
       gunicorn core.wsgi:application --bind 0.0.0.0:$PORT
-    
+
     envVars:
       - key: DEBUG
-        value: false
+        value: "false"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: PYTHON_VERSION
+        value: "3.10.12"
       - key: ALLOWED_HOSTS
-        value: "*.onrender.com,localhost"
-    
-    envVarFile: backend/.env
+        value: ".onrender.com,localhost"
+      # Render Postgres connection string (auto-injected). settings.py parses this.
+      - key: DATABASE_URL
+        fromDatabase:
+          name: smrs-db
+          property: connectionString
+      # Frontend origin — update this to your real Vercel URL after first deploy
+      - key: CORS_ALLOWED_ORIGINS
+        value: "https://smrs-rental-system.vercel.app"
+      - key: CSRF_TRUSTED_ORIGINS
+        value: "https://smrs-rental-system.vercel.app,https://smrs-backend.onrender.com"
+      - key: CLICKPESA_CLIENT_ID
+        sync: false
+      - key: CLICKPESA_API_KEY
+        sync: false
+      - key: CLICKPESA_CHECKSUM_KEY
+        sync: false
+      - key: CLICKPESA_BASE_URL
+        value: "https://api.clickpesa.com/third-parties"
